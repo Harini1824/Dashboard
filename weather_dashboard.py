@@ -1,22 +1,24 @@
 import streamlit as st
 import pandas as pd
 import json
-from datetime import datetime
+import os
 import plotly.express as px
 
-# Load data from file
-file_path = "data_lake/weather_data.json"
+def weather_dashboard(city_filter=None):
+    file_path = "data_lake/weather_data.json"
+    if not os.path.exists(file_path):
+        st.error("No weather data found. Please run fetch_weather.py first.")
+        return
 
-@st.cache_data
-def load_data(path):
-    with open(path, "r") as f:
+    with open(file_path, "r") as f:
         data = json.load(f)
-    # Normalize nested JSON to flat table
+
+    # Extract relevant data to a dataframe
     records = []
     for entry in data:
         main = entry.get("main", {})
-        weather = entry.get("weather", [{}])[0]  # first weather condition
-        record = {
+        weather = entry.get("weather", [{}])[0]
+        records.append({
             "city": entry.get("name", ""),
             "date": entry.get("fetched_at", ""),
             "temp": main.get("temp"),
@@ -26,60 +28,31 @@ def load_data(path):
             "weather_desc": weather.get("description"),
             "pressure": main.get("pressure"),
             "wind_speed": entry.get("wind", {}).get("speed"),
-        }
-        records.append(record)
+        })
+
     df = pd.DataFrame(records)
-    # Convert date string to datetime
     df["date"] = pd.to_datetime(df["date"])
-    return df
 
-st.title("Weather Data Dashboard")
+    # Filter by city if given
+    if city_filter:
+        df = df[df["city"].str.contains(city_filter, case=False, na=False)]
 
-try:
-    df = load_data(file_path)
-except FileNotFoundError:
-    st.error("No weather data file found. Please fetch data first.")
-    st.stop()
+    if df.empty:
+        st.warning("No weather data available for this city.")
+        return
 
-# Sidebar filters
-st.sidebar.header("Filters")
+    st.subheader("☀️ Weather Data")
+    st.write(df)
 
-# Filter by city
-cities = df["city"].unique()
-selected_city = st.sidebar.selectbox("Select City", cities)
+    metric = st.selectbox("Select metric to plot", ["temp", "feels_like", "humidity", "pressure", "wind_speed"], key="weather_metric")
+    fig_type = st.selectbox("Select graph type", ["Line", "Bar", "Scatter"], key="weather_graph_type")
 
-# Filter by date range
-min_date, max_date = df["date"].min(), df["date"].max()
-start_date = st.sidebar.date_input("Start Date", min_date.date())
-end_date = st.sidebar.date_input("End Date", max_date.date())
+    if fig_type == "Line":
+        fig = px.line(df, x="date", y=metric, title=f"{metric.capitalize()} over time")
+    elif fig_type == "Bar":
+        fig = px.bar(df, x="date", y=metric, title=f"{metric.capitalize()} over time")
+    else:
+        fig = px.scatter(df, x="date", y=metric, title=f"{metric.capitalize()} over time")
 
-# Filter data accordingly
-filtered_df = df[
-    (df["city"] == selected_city) &
-    (df["date"] >= pd.Timestamp(start_date)) &
-    (df["date"] <= pd.Timestamp(end_date))
-]
+    st.plotly_chart(fig)
 
-if filtered_df.empty:
-    st.warning("No data for selected filters.")
-    st.stop()
-
-st.write(f"### Weather data for {selected_city} from {start_date} to {end_date}")
-st.dataframe(filtered_df)
-
-# Choose metric to plot
-metric = st.selectbox("Select metric to plot", ["temp", "feels_like", "humidity", "pressure", "wind_speed"])
-
-# Choose graph type
-graph_type = st.selectbox("Select graph type", ["Line", "Bar", "Scatter"])
-
-# Plot the graph
-fig = None
-if graph_type == "Line":
-    fig = px.line(filtered_df, x="date", y=metric, title=f"{metric.capitalize()} over time")
-elif graph_type == "Bar":
-    fig = px.bar(filtered_df, x="date", y=metric, title=f"{metric.capitalize()} over time")
-elif graph_type == "Scatter":
-    fig = px.scatter(filtered_df, x="date", y=metric, title=f"{metric.capitalize()} over time")
-
-st.plotly_chart(fig)

@@ -2,77 +2,50 @@ import streamlit as st
 import pandas as pd
 import json
 import os
-import matplotlib.pyplot as plt
 
-# Title
-st.title("📬 Posts Data Dashboard")
+def posts_dashboard(user_id_filter=None, search_term=None, date_range=None):
+    file_path = "data_lake/posts_data.json"
+    if not os.path.exists(file_path):
+        st.error("No posts data found. Please run fetch_posts.py first.")
+        return
 
-# File path
-file_path = "data_lake/posts_data.json"
+    with open(file_path, "r") as f:
+        try:
+            data = json.load(f)
+            df = pd.DataFrame(data)
+        except json.JSONDecodeError:
+            st.error("Invalid JSON format in posts_data.json.")
+            return
 
-# Check if file exists
-if not os.path.exists(file_path):
-    st.error("No posts data found. Please run fetch_posts.py first.")
-    st.stop()
+    df['fetched_at'] = pd.to_datetime(df['fetched_at'], errors='coerce')
+    df.dropna(subset=['fetched_at'], inplace=True)
 
-# Load data
-with open(file_path, "r") as f:
-    try:
-        data = json.load(f)
-        df = pd.DataFrame(data)
-    except json.JSONDecodeError:
-        st.error("Invalid JSON format in posts_data.json.")
-        st.stop()
+    if user_id_filter is not None:
+        df = df[df['userId'] == user_id_filter]
 
-# Convert date
-df['fetched_at'] = pd.to_datetime(df['fetched_at'], errors='coerce')
-df.dropna(subset=['fetched_at'], inplace=True)
+    if date_range is not None:
+        start_date, end_date = date_range
+        df = df[(df['fetched_at'].dt.date >= start_date) & (df['fetched_at'].dt.date <= end_date)]
 
-# Sidebar filters
-st.sidebar.header("🔍 Filters")
+    if search_term:
+        df = df[
+            df['title'].str.contains(search_term, case=False, na=False) |
+            df['body'].str.contains(search_term, case=False, na=False)
+        ]
 
-# User ID filter
-user_ids = sorted(df['userId'].dropna().unique())
-selected_users = st.sidebar.multiselect("Select User ID(s)", user_ids, default=user_ids)
+    if df.empty:
+        st.warning("No posts data found for given filters.")
+        return
 
-# Keyword search
-search_term = st.sidebar.text_input("Search Keyword in Title or Body")
+    st.subheader("📬 Posts Data")
+    st.write(df[['userId', 'title', 'body', 'fetched_at']])
 
-# Date range
-min_date = df['fetched_at'].min()
-max_date = df['fetched_at'].max()
-start_date, end_date = st.sidebar.date_input("Date Range", [min_date.date(), max_date.date()])
-
-# Apply filters
-filtered_df = df[df['userId'].isin(selected_users)]
-filtered_df = filtered_df[
-    (filtered_df['fetched_at'].dt.date >= start_date) & 
-    (filtered_df['fetched_at'].dt.date <= end_date)
-]
-
-if search_term:
-    filtered_df = filtered_df[
-        filtered_df['title'].str.contains(search_term, case=False, na=False) |
-        filtered_df['body'].str.contains(search_term, case=False, na=False)
-    ]
-
-# Show filtered data
-st.subheader("📄 Filtered Posts")
-st.write(filtered_df[['userId', 'title', 'body', 'fetched_at']])
-
-# Visualization section
-st.subheader("📊 Visualizations")
-
-# 1. Posts per user
-if not filtered_df.empty:
-    user_counts = filtered_df['userId'].value_counts().sort_index()
+    # Visualizations
+    user_counts = df['userId'].value_counts().sort_index()
     st.write("### Posts per User ID")
     st.bar_chart(user_counts)
 
-    # 2. Posts over time
-    posts_over_time = filtered_df.groupby(filtered_df['fetched_at'].dt.date).size()
+    posts_over_time = df.groupby(df['fetched_at'].dt.date).size()
     st.write("### Posts over Time")
     st.line_chart(posts_over_time)
-else:
-    st.warning("No data available for selected filters.")
 
